@@ -56,11 +56,34 @@ describe('盒内盘点会话',()=>{
   if('error'in r)throw new Error('不应失败');
   expect(r.item.archiveId).toBe('arc-2');
   expect(r.session.items.map(i=>i.found)).toEqual([false,true,false]);
-  // 再扫描 DUP：只剩一件未找到，唯一命中第一件
+  // 再扫描 DUP：虽只剩一件未找到，仍返回候选要求明示选择，不自动登记
   const out2=scanArchiveNo(r.session,'DUP');
-  if(out2.kind!=='found')throw new Error('应唯一命中剩余项');
-  expect(out2.item.archiveId).toBe('arc-1');
-  expect(out2.session.items.map(i=>i.found)).toEqual([true,true,false]);
+  if(out2.kind!=='ambiguous')throw new Error('仍应要求明示选择');
+  expect(out2.matched).toBe(2);
+  expect(out2.candidates.map(c=>c.archiveId)).toEqual(['arc-1']);
+  expect(foundCount(r.session)).toBe(1);
+  const r2=markFound(r.session,out2.candidates[0].itemId);
+  if('error'in r2)throw new Error('不应失败');
+  expect(r2.session.items.map(i=>i.found)).toEqual([true,true,false]);
+ });
+
+ it('同一档号有多件时，选中一件后再次扫描仍须明示选择，不自动登记另一件',()=>{
+  const s=sessionOf([a({id:'arc-1',archiveNo:'DUP',title:'甲',startPage:1,endPage:5}),a({id:'arc-2',archiveNo:'DUP',title:'乙',startPage:6,endPage:9})]);
+  const first=scanArchiveNo(s,'DUP');
+  if(first.kind!=='ambiguous')throw new Error('应歧义');
+  const r=markFound(s,first.candidates[0].itemId);
+  if('error'in r)throw new Error('不应失败');
+  // 再次扫描同一档号：剩余那件不自动登记，仍给出候选
+  const again=scanArchiveNo(r.session,'DUP');
+  if(again.kind!=='ambiguous')throw new Error('仍应歧义而非自动登记');
+  expect(again.candidates).toHaveLength(1);
+  expect(again.candidates[0].archiveId).toBe('arc-2');
+  expect(foundCount(r.session)).toBe(1);
+  // 两件都找到后再扫描 → 重复扫描
+  const r2=markFound(r.session,again.candidates[0].itemId);
+  if('error'in r2)throw new Error('不应失败');
+  expect(r2.session.completedAt).toBeTruthy();
+  expect(scanArchiveNo(r2.session,'DUP').kind).toBe('duplicate');
  });
 
  it('档号不存在与重复扫描时不改动快照和计数',()=>{

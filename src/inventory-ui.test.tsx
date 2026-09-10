@@ -93,7 +93,7 @@ describe('盒内盘点界面',()=>{
   const panel=panelOf('B2');
   fireEvent.click(within(panel).getByText('开始盘点'));
   scan(panel,'DUP');
-  expect(within(panel).getByText(/命中 2 件/)).toBeTruthy();
+  expect(within(panel).getByText(/共有 2 件/)).toBeTruthy();
   // 候选展示盘点序号、题名和页码区间
   const cands=within(panel).getByLabelText('歧义候选');
   expect(within(cands).getByText('第 1 项')).toBeTruthy();
@@ -120,5 +120,26 @@ describe('盒内盘点界面',()=>{
   expect(s.items[1].archiveId).toBe('id4');
   expect(s.items[0].found).toBe(false);
   expect(s.completedAt).toBeNull();
+  // 再次扫描同一档号：仍须明示选择，不自动登记剩余那件
+  scan(panel,'DUP');
+  expect(within(panel).getByText(/共有 2 件/)).toBeTruthy();
+  const cands3=within(panel).getByLabelText('歧义候选');
+  expect(within(cands3).getByText('同名甲')).toBeTruthy();
+  expect(within(cands3).queryByText('同名乙')).toBeNull();
+  expect(within(panel).getByText('1 / 2')).toBeTruthy();
+  expect(storedSessions()[0].items.map(i=>i.found)).toEqual([false,true]);
+  // 取消选择后计数仍不变；明示选中同名甲才推进并自动完成
+  fireEvent.click(within(cands3).getByText('取消选择'));
+  expect(within(panel).getByText(/已取消选择/)).toBeTruthy();
+  expect(within(panel).getByText('1 / 2')).toBeTruthy();
+  scan(panel,'DUP');
+  const cands4=within(panel).getByLabelText('歧义候选');
+  const first=within(cands4).getByText('同名甲').closest('.inv-candidate') as HTMLElement;
+  fireEvent.click(within(first).getByText('选中此件'));
+  expect(within(panel).getByText('2 / 2')).toBeTruthy();
+  expect(within(panel).getByText('已完成')).toBeTruthy();
+  const fin=storedSessions()[0];
+  expect(fin.items.every(i=>i.found)).toBe(true);
+  expect(fin.completedAt).toBeTruthy();
  });
 });

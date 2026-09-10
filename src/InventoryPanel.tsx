@@ -32,7 +32,7 @@ export default function InventoryPanel({box,session,onStart,onSession}:{box:stri
    setMessage({kind:'ok',text:out.session.completedAt?`第 ${seq} 项「${out.item.archiveNo}」已登记为已找到，全部命中，盘点自动完成`:`第 ${seq} 项「${out.item.archiveNo}」已登记为已找到（${found+1}/${total}）`});
   }else if(out.kind==='ambiguous'){
    setCandidates(out.candidates);
-   setMessage({kind:'info',text:`档号「${raw}」命中 ${out.candidates.length} 件，请明确选中一件才会推进进度`});
+   setMessage({kind:'info',text:`档号「${raw}」在快照中共有 ${out.matched} 件，请明确选中一件才会推进进度`});
   }else if(out.kind==='duplicate'){
    setCandidates(null);
    setMessage({kind:'error',text:`档号「${raw}」已登记过，重复扫描不推进进度，快照与计数保持不变`});

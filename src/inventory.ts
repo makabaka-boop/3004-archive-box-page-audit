@@ -34,12 +34,13 @@ export function markFound(session:InventorySession,itemId:string,now=new Date().
 
 export type ScanOutcome=
  |{kind:'found';session:InventorySession;item:InventoryItem}
- |{kind:'ambiguous';candidates:InventoryItem[]}
+ |{kind:'ambiguous';candidates:InventoryItem[];matched:number}
  |{kind:'duplicate';item:InventoryItem}
  |{kind:'not-found'};
 
-// 扫描/录入档号：唯一命中直接按会话项标识登记；命中多件未找到项时返回候选，由用户明示选择；
-// 档号不存在或重复扫描时不产生任何变化，快照与计数保持不变
+// 扫描/录入档号：快照中仅此一件时唯一命中，直接按会话项标识登记；
+// 同一档号在快照中有多件时一律返回未找到候选由用户明示选择——即使选中后只剩一件未找到，也不自动登记另一件；
+// 档号不存在或重复扫描（命中的多件均已找到）时不产生任何变化，快照与计数保持不变
 export function scanArchiveNo(session:InventorySession,raw:string,now=new Date().toISOString()):ScanOutcome{
  const no=raw.trim();
  if(!no)return{kind:'not-found'};
@@ -47,7 +48,7 @@ export function scanArchiveNo(session:InventorySession,raw:string,now=new Date()
  if(!matched.length)return{kind:'not-found'};
  const pending=matched.filter(i=>!i.found);
  if(!pending.length)return{kind:'duplicate',item:matched[0]};
- if(pending.length>1)return{kind:'ambiguous',candidates:pending};
+ if(matched.length>1)return{kind:'ambiguous',candidates:pending,matched:matched.length};
  return{kind:'found',session:stamp(session,pending[0].itemId,now),item:pending[0]};
 }
 
