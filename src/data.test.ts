@@ -79,5 +79,42 @@ describe('连续编页',()=>{const r=(x:Partial<Archive>):Archive=>a({...x});
   expect(out.archives.find(a=>a.id==='3')).toMatchObject({startPage:3,endPage:3});
   expect(Object.keys(out.resolutions)).toEqual(['3:reversed']);
  });
+ it('排序键完全相同时保留原有次序，不按内部标识重排',()=>{
+  const xs=[r({id:'z9',archiveNo:'C-1',startPage:1,endPage:10,declaredPages:4}),r({id:'a1',archiveNo:'C-1',startPage:1,endPage:10,declaredPages:3})];
+  const p=buildRepagination(xs,{},'B1','1');
+  expect('error'in p).toBe(false);if('error'in p)throw new Error('不应失败');
+  expect(p.rows.map(q=>q.archive.id)).toEqual(['z9','a1']);
+  expect(p.rows.map(q=>[q.newStart,q.newEnd])).toEqual([[1,4],[5,7]]);
+  const out=applyRepagination(xs,{},p);
+  expect(out.archives.map(a=>[a.id,a.startPage,a.endPage])).toEqual([['z9',1,4],['a1',5,7]]);
+ });
+ it('恢复含冒号档案标识的备份后确认，目标档案旧处置被清除且纳入指纹',()=>{
+  const xs=[r({id:'r:1',archiveNo:'A-1',declaredPages:2}),r({id:'r:2',archiveNo:'A-2',startPage:5,endPage:6,declaredPages:2})];
+  const res:Resolutions={'r:1:count':{status:'fixed',note:'x'},'r:2:reversed':{status:'kept',note:'y'}};
+  const restored=parseBackup(JSON.stringify(makeBackup(xs,res)));
+  const p=buildRepagination(restored.archives,restored.resolutions,'B1','1') as Exclude<ReturnType<typeof buildRepagination>,{error:string}>;
+  expect(p.rows.map(q=>q.resolutionCount)).toEqual([1,1]);
+  // 冒号标识档案的处置变化必须令旧预览过期
+  expect(repageFingerprint(restored.archives,{},'B1')).not.toBe(p.fingerprint);
+  const out=applyRepagination(restored.archives,restored.resolutions,p);
+  expect(out.resolutions).toEqual({});
+  expect(out.archives.map(a=>[a.startPage,a.endPage])).toEqual([[1,2],[3,4]]);
+ });
+ it('恢复含重复内部标识的同盒备份后确认，每件写入各自连续区间',()=>{
+  const xs=[r({id:'dup',archiveNo:'D-1',startPage:1,endPage:5,declaredPages:5}),r({id:'dup',archiveNo:'D-2',startPage:10,endPage:20,declaredPages:4})];
+  const restored=parseBackup(JSON.stringify(makeBackup(xs,{})));
+  const p=buildRepagination(restored.archives,restored.resolutions,'B1','1');
+  expect('error'in p).toBe(false);if('error'in p)throw new Error('不应失败');
+  expect(p.rows.map(q=>[q.newStart,q.newEnd])).toEqual([[1,5],[6,9]]);
+  const out=applyRepagination(restored.archives,restored.resolutions,p);
+  expect(out.archives.filter(a=>a.boxNo==='B1').map(a=>[a.archiveNo,a.startPage,a.endPage])).toEqual([['D-1',1,5],['D-2',6,9]]);
+ });
 });
-describe('筛选与备份',()=>{it('组合筛选问题状态',()=>{const xs=[a({}),a({id:'2',title:'其他',archiveNo:'X',year:2023,boxNo:'B2',declaredPages:2})],is=detectIssues(xs);expect(filterArchives(xs,is,{}, {query:'其他',year:'2023',box:'B2',status:'pending'})).toHaveLength(1)});it('备份往返并拒绝非法结构',()=>{expect(parseBackup(JSON.stringify(makeBackup([a({})],{}))).archives).toHaveLength(1);expect(()=>parseBackup('{"version":1,"archives":"bad"}')).toThrow(/无效/)})});
+describe('筛选与备份',()=>{it('组合筛选问题状态',()=>{const xs=[a({}),a({id:'2',title:'其他',archiveNo:'X',year:2023,boxNo:'B2',declaredPages:2})],is=detectIssues(xs);expect(filterArchives(xs,is,{}, {query:'其他',year:'2023',box:'B2',status:'pending'})).toHaveLength(1)});it('备份往返并拒绝非法结构',()=>{expect(parseBackup(JSON.stringify(makeBackup([a({})],{}))).archives).toHaveLength(1);expect(()=>parseBackup('{"version":1,"archives":"bad"}')).toThrow(/无效/)});
+ it('拒绝页码超过上限的旧版备份，边界值仍合法',()=>{
+  expect(()=>parseBackup(JSON.stringify(makeBackup([a({startPage:1000000,endPage:1000009})],{})))).toThrow(/无效备份/);
+  expect(()=>parseBackup(JSON.stringify(makeBackup([a({endPage:1000000})],{})))).toThrow(/无效备份/);
+  expect(()=>parseBackup(JSON.stringify(makeBackup([a({declaredPages:1000000})],{})))).toThrow(/无效备份/);
+  expect(()=>parseBackup(JSON.stringify(makeBackup([a({year:1000000})],{})))).toThrow(/无效备份/);
+  expect(parseBackup(JSON.stringify(makeBackup([a({startPage:999999,endPage:999999})],{}))).archives).toHaveLength(1);
+ });});

@@ -1,4 +1,4 @@
-import{afterEach,describe,expect,it}from'vitest';import{cleanup,fireEvent,render,within}from'@testing-library/react';import App from'./App';import type{Archive,Resolutions}from'./types';
+import{afterEach,describe,expect,it}from'vitest';import{cleanup,fireEvent,render,waitFor,within}from'@testing-library/react';import App from'./App';import{makeBackup}from'./data';import type{Archive,Resolutions}from'./types';
 
 const ARCHIVES_KEY='archive-audit:archives',RES_KEY='archive-audit:resolutions';
 const seed:Archive[]=[
@@ -11,6 +11,7 @@ const seedRes:Resolutions={'id1:count':{status:'fixed',note:'已改'},'id4:rever
 const setup=()=>{localStorage.clear();localStorage.setItem(ARCHIVES_KEY,JSON.stringify(seed));localStorage.setItem(RES_KEY,JSON.stringify(seedRes))};
 const storedArchives=():Archive[]=>JSON.parse(localStorage.getItem(ARCHIVES_KEY)||'[]');
 const storedRes=():Resolutions=>JSON.parse(localStorage.getItem(RES_KEY)||'{}');
+const importJson=(container:HTMLElement,backup:unknown)=>{const input=container.querySelector('input[accept=".json,application/json"]') as HTMLInputElement;fireEvent.change(input,{target:{files:[new File([JSON.stringify(backup)],'备份.json',{type:'application/json'})]}});return waitFor(()=>{if(!container.querySelector('.notice'))throw new Error('等待导入结果')})};
 
 afterEach(cleanup);
 
@@ -130,5 +131,47 @@ describe('连续编页界面',()=>{
   expect((getByText('确认写入') as HTMLButtonElement).disabled).toBe(false);
   fireEvent.click(getByText('确认写入'));
   expect(storedArchives().find(a=>a.id==='id2')).toMatchObject({startPage:13,endPage:15});
+ });
+
+ it('恢复含冒号档案标识的备份后确认连续编页，目标档案旧处置被清除',async()=>{
+  localStorage.clear();
+  const backup=makeBackup([
+   {id:'r:1',archiveNo:'A-1',title:'甲',year:2024,retention:'永久',boxNo:'B1',startPage:1,endPage:10,declaredPages:10,note:''},
+   {id:'r:2',archiveNo:'A-2',title:'乙',year:2024,retention:'永久',boxNo:'B1',startPage:11,endPage:20,declaredPages:10,note:''},
+  ],{'r:1:count':{status:'fixed',note:'旧处置'},'r:2:reversed':{status:'kept',note:'旧处置'}});
+  const{container,getByText}=render(<App/>);
+  await importJson(container,backup);
+  expect(getByText(/已恢复 2 条档案/)).toBeTruthy();
+  fireEvent.click(getByText('连续编页'));
+  fireEvent.click(getByText('预览重排'));
+  expect(getByText(/将清除 2 条相关旧处置/)).toBeTruthy();
+  fireEvent.click(getByText('确认写入'));
+  expect(storedRes()).toEqual({});
+  expect(storedArchives().map(a=>[a.id,a.startPage,a.endPage])).toEqual([['r:1',1,10],['r:2',11,20]]);
+ });
+
+ it('恢复含重复内部标识的同盒备份后确认，两件写入各自连续区间',async()=>{
+  localStorage.clear();
+  const backup=makeBackup([
+   {id:'dup',archiveNo:'D-1',title:'甲',year:2024,retention:'永久',boxNo:'B1',startPage:1,endPage:5,declaredPages:5,note:''},
+   {id:'dup',archiveNo:'D-2',title:'乙',year:2024,retention:'永久',boxNo:'B1',startPage:10,endPage:20,declaredPages:4,note:''},
+  ],{});
+  const{container,getByText}=render(<App/>);
+  await importJson(container,backup);
+  expect(getByText(/已恢复 2 条档案/)).toBeTruthy();
+  fireEvent.click(getByText('连续编页'));
+  fireEvent.click(getByText('预览重排'));
+  fireEvent.click(getByText('确认写入'));
+  expect(storedArchives().map(a=>[a.archiveNo,a.startPage,a.endPage])).toEqual([['D-1',1,5],['D-2',6,9]]);
+ });
+
+ it('导入页码超过上限的旧版备份被拒绝，当前档案数据保持不变',async()=>{
+  setup();
+  const bad=makeBackup([{...seed[0],startPage:1000000,endPage:1000009}],{});
+  const{container,getByText}=render(<App/>);
+  await importJson(container,bad);
+  expect(getByText(/无效备份/)).toBeTruthy();
+  expect(storedArchives()).toEqual(seed);
+  expect(storedRes()).toEqual(seedRes);
  });
 });
