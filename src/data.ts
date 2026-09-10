@@ -38,21 +38,32 @@ export function makeBackup(archives:Archive[],resolutions:Resolutions):Backup{re
 // 连续编页：按当前起始页、结束页、档号稳定排序后，依据每件申报页数依次生成连续区间
 export const boxOrder=(a:Archive,b:Archive)=>a.startPage-b.startPage||a.endPage-b.endPage||(a.archiveNo<b.archiveNo?-1:a.archiveNo>b.archiveNo?1:0)||(a.id<b.id?-1:a.id>b.id?1:0);
 export type RepageRow={archive:Archive;oldStart:number;oldEnd:number;newStart:number;newEnd:number;resolutionCount:number};
-export type RepagePreview={box:string;startPage:number;rows:RepageRow[]}|{error:string};
+export type RepagePreview={box:string;startPage:number;rows:RepageRow[];fingerprint:string}|{error:string};
 export function parseStartPage(raw:string):number|{error:string}{const t=raw.trim();if(t==='')return{error:'请填写起始页'};if(!/^\d+$/.test(t))return{error:'起始页须为非负整数'};const n=Number(t);if(n>PAGE_MAX)return{error:`起始页不能超过页码上限 ${PAGE_MAX}`};return n}
+// 盒内档案（含其处置）的指纹：同盒数据变化后旧预览必须作废，他盒变化不影响
+export function repageFingerprint(archives:Archive[],resolutions:Resolutions,box:string):string{
+ const inBox=archives.filter(a=>a.boxNo===box);
+ const ids=new Set(inBox.map(a=>a.id));
+ const items=inBox.map(a=>[a.id,a.archiveNo,a.startPage,a.endPage,a.declaredPages]).sort((x,y)=>x[0]<y[0]?-1:x[0]>y[0]?1:0);
+ const res=Object.keys(resolutions).filter(k=>ids.has(k.slice(0,k.indexOf(':')))).sort().map(k=>[k,resolutions[k].status,resolutions[k].note]);
+ return JSON.stringify({items,res});
+}
 export function buildRepagination(archives:Archive[],resolutions:Resolutions,box:string,rawStart:string):RepagePreview{
  if(!archives.some(a=>a.boxNo===box))return{error:'所选盒号不存在或盒内没有档案'};
  const start=parseStartPage(rawStart);if(typeof start!=='number')return start;
  const rows:RepageRow[]=[];let cursor=start;
  for(const a of archives.filter(x=>x.boxNo===box).sort(boxOrder)){
-  const pages=a.declaredPages;const newEnd=cursor+pages-1;
+  const pages=a.declaredPages;
+  if(pages<=0)return{error:`${a.archiveNo} 申报页数为 ${pages}，无法生成有效页码区间，请先修正该件申报页数`};
+  const newEnd=cursor+pages-1;
   if(cursor>PAGE_MAX||newEnd>PAGE_MAX)return{error:`${a.archiveNo} 重排后页码超过上限 ${PAGE_MAX}，请减小起始页或申报页数`};
   const resolutionCount=Object.keys(resolutions).filter(k=>k.startsWith(`${a.id}:`)).length;
   rows.push({archive:a,oldStart:a.startPage,oldEnd:a.endPage,newStart:cursor,newEnd,resolutionCount});cursor=newEnd+1;
  }
- return{box,startPage:start,rows};
+ return{box,startPage:start,rows,fingerprint:repageFingerprint(archives,resolutions,box)};
 }
 export function applyRepagination(archives:Archive[],resolutions:Resolutions,preview:Exclude<RepagePreview,{error:string}>):{archives:Archive[];resolutions:Resolutions}{
+ if(repageFingerprint(archives,resolutions,preview.box)!==preview.fingerprint)throw new Error('盒内档案已变化，请重新预览后再确认');
  const byId=new Map(preview.rows.map(r=>[r.archive.id,r]));
  const next=archives.map(a=>byId.has(a.id)?{...a,startPage:(byId.get(a.id)as RepageRow).newStart,endPage:(byId.get(a.id)as RepageRow).newEnd}:a);
  const ids=new Set(preview.rows.map(r=>r.archive.id));

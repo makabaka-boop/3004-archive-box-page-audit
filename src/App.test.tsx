@@ -1,4 +1,4 @@
-import{afterEach,describe,expect,it}from'vitest';import{cleanup,fireEvent,render}from'@testing-library/react';import App from'./App';import type{Archive,Resolutions}from'./types';
+import{afterEach,describe,expect,it}from'vitest';import{cleanup,fireEvent,render,within}from'@testing-library/react';import App from'./App';import type{Archive,Resolutions}from'./types';
 
 const ARCHIVES_KEY='archive-audit:archives',RES_KEY='archive-audit:resolutions';
 const seed:Archive[]=[
@@ -70,5 +70,43 @@ describe('连续编页界面',()=>{
   expect(queryByText('确认写入')).toBeNull();
   // 数据原样
   expect(storedArchives().find(a=>a.id==='id2')).toMatchObject({startPage:20,endPage:25});
+ });
+
+ it('盒内存在申报页数为零的档案时预览说明原因并禁止确认',()=>{
+  localStorage.clear();
+  const withZero=seed.map(a=>a.id==='id3'?{...a,declaredPages:0}:a);
+  localStorage.setItem(ARCHIVES_KEY,JSON.stringify(withZero));
+  localStorage.setItem(RES_KEY,JSON.stringify(seedRes));
+  const{getByText,queryByText}=render(<App/>);
+  fireEvent.click(getByText('连续编页'));
+  fireEvent.click(getByText('预览重排'));
+  expect(getByText(/A-002 申报页数为 0/)).toBeTruthy();
+  expect(queryByText('确认写入')).toBeNull();
+  expect(storedArchives().find(a=>a.id==='id3')?.declaredPages).toBe(0);
+ });
+
+ it('预览后同盒档案变化必须重新预览才能确认',()=>{
+  setup();const{getByText,getByLabelText}=render(<App/>);
+  fireEvent.click(getByText('连续编页'));
+  fireEvent.click(getByText('预览重排'));
+  expect(getByText('13—18')).toBeTruthy();
+  // 在档案清单里编辑同盒的 A-001，申报页数 6 -> 3
+  const row=[...document.querySelectorAll('tbody tr')].find(tr=>tr.textContent?.includes('A-001')) as HTMLElement;
+  fireEvent.click(within(row).getByText('编辑'));
+  fireEvent.change(getByLabelText(/申报页数/),{target:{value:'3'}});
+  fireEvent.click(getByText('保存并复核'));
+  // 旧预览过期：提示并禁用确认，点击也不能落盘
+  expect(getByText('预览已过期')).toBeTruthy();
+  expect(getByText(/盒 B1 的档案或其异常处置发生过变化/)).toBeTruthy();
+  const confirmBtn=getByText('确认写入') as HTMLButtonElement;
+  expect(confirmBtn.disabled).toBe(true);
+  fireEvent.click(confirmBtn);
+  expect(storedArchives().find(a=>a.id==='id2')).toMatchObject({startPage:20,endPage:25});
+  // 重新预览后按新申报页数重排：A-001 变为 13—15，可正常确认
+  fireEvent.click(getByText('预览重排'));
+  expect(getByText('13—15')).toBeTruthy();
+  expect((getByText('确认写入') as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(getByText('确认写入'));
+  expect(storedArchives().find(a=>a.id==='id2')).toMatchObject({startPage:13,endPage:15});
  });
 });

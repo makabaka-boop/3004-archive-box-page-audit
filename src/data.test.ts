@@ -1,4 +1,4 @@
-import{describe,expect,it}from'vitest';import{CSV_HEADERS,applyRepagination,buildRepagination,detectIssues,filterArchives,importCsv,makeBackup,parseBackup}from'./data';import type{Archive,Resolutions}from'./types';
+import{describe,expect,it}from'vitest';import{CSV_HEADERS,applyRepagination,buildRepagination,detectIssues,filterArchives,importCsv,makeBackup,parseBackup,repageFingerprint}from'./data';import type{Archive,Resolutions}from'./types';
 const a=(x:Partial<Archive>):Archive=>({id:'1',archiveNo:'A-1',title:'年度总结',year:2024,retention:'永久',boxNo:'B1',startPage:1,endPage:10,declaredPages:10,note:'',...x});
 describe('CSV',()=>{it('解析标准 CSV 和引号字段',()=>{const t=CSV_HEADERS.join(',')+'\nA-2,"会议,纪要",2024,30年,B1,1,2,2,正常';expect(importCsv(t)[0]).toMatchObject({archiveNo:'A-2',title:'会议,纪要'})});it('错误带行号',()=>{const t=CSV_HEADERS.join(',')+'\nA-2,标题,2024,30年,B1,5,2,3,';expect(()=>importCsv(t)).toThrow(/第 2 行/) });it('拒绝重复档号',()=>{const t=CSV_HEADERS.join(',')+'\nA-1,标题,2024,永久,B1,1,2,2,';expect(()=>importCsv(t,[a({})])).toThrow(/重复/)})});
 describe('页码',()=>{it('识别页数不符与倒置',()=>{const k=detectIssues([a({declaredPages:8}),a({id:'2',archiveNo:'A-2',startPage:9,endPage:3})]).map(i=>i.kind);expect(k).toEqual(expect.arrayContaining(['count','reversed']))});it('识别同盒重叠，不跨盒误报',()=>{const xs=[a({}),a({id:'2',archiveNo:'A-2',startPage:8,endPage:12,declaredPages:5}),a({id:'3',archiveNo:'A-3',boxNo:'B2',startPage:8,endPage:12,declaredPages:5})];expect(detectIssues(xs).filter(i=>i.kind==='overlap')).toHaveLength(2)})});
@@ -37,6 +37,30 @@ describe('连续编页',()=>{const r=(x:Partial<Archive>):Archive=>a({...x});
   const p=buildRepagination([r({declaredPages:2})],{},'B1',String(999999));
   expect('error'in p).toBe(true);if(!('error'in p))throw new Error('应失败');
   expect(p.error).toMatch(/超过上限/);
+ });
+ it('申报页数为零时提示原因并禁止确认，不产生负结束页',()=>{
+  const xs=[r({declaredPages:2}),r({id:'2',archiveNo:'A-2',startPage:30,endPage:29,declaredPages:0})];
+  const p=buildRepagination(xs,{},'B1','1');
+  expect('error'in p).toBe(true);if(!('error'in p))throw new Error('应失败');
+  expect(p.error).toMatch(/A-2.*申报页数为 0/);
+  expect(applyRepagination.length).toBeGreaterThan(0);
+ });
+ it('盒内数据变化后旧预览指纹失效，他盒变化不影响，重新预览后可提交',()=>{
+  const xs=[r({declaredPages:2}),r({id:'2',archiveNo:'A-2',declaredPages:2,startPage:20,endPage:21})];
+  const p=buildRepagination(xs,{},'B1','1') as Exclude<ReturnType<typeof buildRepagination>,{error:string}>;
+  expect(repageFingerprint(xs,{},'B1')).toBe(p.fingerprint);
+  // 盒内改动（申报页数变化）
+  const changed=xs.map(a=>a.id==='2'?{...a,declaredPages:3}:a);
+  expect(repageFingerprint(changed,{},'B1')).not.toBe(p.fingerprint);
+  expect(()=>applyRepagination(changed,{},p)).toThrow(/重新预览/);
+  // 他盒改动不影响
+  const other=[...xs,{id:'9',archiveNo:'Z-9',title:'x',year:2024,retention:'永久',boxNo:'B9',startPage:1,endPage:1,declaredPages:1,note:''}];
+  expect(repageFingerprint(other,{},'B1')).toBe(p.fingerprint);
+  // 同盒档案的处置变化也算失效
+  expect(repageFingerprint(xs,{'1:count':{status:'fixed',note:'x'}},'B1')).not.toBe(p.fingerprint);
+  // 重新预览后指纹重新匹配并可提交
+  const p2=buildRepagination(changed,{},'B1','1') as Exclude<ReturnType<typeof buildRepagination>,{error:string}>;
+  expect(applyRepagination(changed,{},p2).archives.filter(a=>a.boxNo==='B1').map(a=>[a.startPage,a.endPage])).toEqual([[1,2],[3,5]]);
  });
  it('确认后只更新目标盒档案并清除其关联旧处置，其他盒不动',()=>{
   const xs=[r({declaredPages:2}),r({id:'2',archiveNo:'A-2',declaredPages:2,startPage:5,endPage:6}),r({id:'3',archiveNo:'B-9',boxNo:'B2',startPage:3,endPage:3,declaredPages:1})];
