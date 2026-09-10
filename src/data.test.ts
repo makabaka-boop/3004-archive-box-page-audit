@@ -58,6 +58,14 @@ describe('连续编页',()=>{const r=(x:Partial<Archive>):Archive=>a({...x});
   expect(repageFingerprint(other,{},'B1')).toBe(p.fingerprint);
   // 同盒档案的处置变化也算失效
   expect(repageFingerprint(xs,{'1:count':{status:'fixed',note:'x'}},'B1')).not.toBe(p.fingerprint);
+  // 题名、年度、保管期限、备注任一变化也算失效
+  expect(repageFingerprint(xs.map(a=>a.id==='2'?{...a,title:'新题名'}:a),{},'B1')).not.toBe(p.fingerprint);
+  expect(repageFingerprint(xs.map(a=>a.id==='2'?{...a,year:2023}:a),{},'B1')).not.toBe(p.fingerprint);
+  expect(repageFingerprint(xs.map(a=>a.id==='2'?{...a,retention:'10年'}:a),{},'B1')).not.toBe(p.fingerprint);
+  expect(repageFingerprint(xs.map(a=>a.id==='2'?{...a,note:'补注'}:a),{},'B1')).not.toBe(p.fingerprint);
+  // 档案移出/移入本盒也失效
+  expect(repageFingerprint(xs.map(a=>a.id==='2'?{...a,boxNo:'B2'}:a),{},'B1')).not.toBe(p.fingerprint);
+  expect(repageFingerprint([...xs,r({id:'8',archiveNo:'A-8',boxNo:'B1',declaredPages:1})],{},'B1')).not.toBe(p.fingerprint);
   // 重新预览后指纹重新匹配并可提交
   const p2=buildRepagination(changed,{},'B1','1') as Exclude<ReturnType<typeof buildRepagination>,{error:string}>;
   expect(applyRepagination(changed,{},p2).archives.filter(a=>a.boxNo==='B1').map(a=>[a.startPage,a.endPage])).toEqual([[1,2],[3,5]]);

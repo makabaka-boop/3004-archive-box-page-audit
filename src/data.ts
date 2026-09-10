@@ -40,11 +40,11 @@ export const boxOrder=(a:Archive,b:Archive)=>a.startPage-b.startPage||a.endPage-
 export type RepageRow={archive:Archive;oldStart:number;oldEnd:number;newStart:number;newEnd:number;resolutionCount:number};
 export type RepagePreview={box:string;startPage:number;rows:RepageRow[];fingerprint:string}|{error:string};
 export function parseStartPage(raw:string):number|{error:string}{const t=raw.trim();if(t==='')return{error:'请填写起始页'};if(!/^\d+$/.test(t))return{error:'起始页须为非负整数'};const n=Number(t);if(n>PAGE_MAX)return{error:`起始页不能超过页码上限 ${PAGE_MAX}`};return n}
-// 盒内档案（含其处置）的指纹：同盒数据变化后旧预览必须作废，他盒变化不影响
+// 盒内档案（含其处置）的指纹：同盒数据（题名、年度、期限、页码等任一字段）变化后旧预览必须作废，他盒变化不影响
 export function repageFingerprint(archives:Archive[],resolutions:Resolutions,box:string):string{
  const inBox=archives.filter(a=>a.boxNo===box);
  const ids=new Set(inBox.map(a=>a.id));
- const items=inBox.map(a=>[a.id,a.archiveNo,a.startPage,a.endPage,a.declaredPages]).sort((x,y)=>x[0]<y[0]?-1:x[0]>y[0]?1:0);
+ const items=inBox.map(a=>[a.id,a.archiveNo,a.title,a.year,a.retention,a.startPage,a.endPage,a.declaredPages,a.note]).sort((x,y)=>x[0]<y[0]?-1:x[0]>y[0]?1:0);
  const res=Object.keys(resolutions).filter(k=>ids.has(k.slice(0,k.indexOf(':')))).sort().map(k=>[k,resolutions[k].status,resolutions[k].note]);
  return JSON.stringify({items,res});
 }

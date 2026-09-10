@@ -61,6 +61,28 @@ describe('连续编页界面',()=>{
   expect(again.queryByText('20—25')).toBeNull();
  });
 
+ it('预览后修改同盒档案的题名、年度、期限或备注也必须重新预览',()=>{
+  setup();const{getByText,getByLabelText}=render(<App/>);
+  fireEvent.click(getByText('连续编页'));
+  fireEvent.click(getByText('预览重排'));
+  // 编辑同盒 A-001 的题名
+  const row=[...document.querySelectorAll('tbody tr')].find(tr=>tr.textContent?.includes('A-001')) as HTMLElement;
+  fireEvent.click(within(row).getByText('编辑'));
+  fireEvent.change(getByLabelText(/标题 \*/),{target:{value:'改名后的第一件'}});
+  fireEvent.click(getByText('保存并复核'));
+  // 旧预览过期：提示、禁用确认、点击不落盘
+  expect(getByText('预览已过期')).toBeTruthy();
+  const confirmBtn=getByText('确认写入') as HTMLButtonElement;
+  expect(confirmBtn.disabled).toBe(true);
+  fireEvent.click(confirmBtn);
+  expect(storedArchives().find(a=>a.id==='id2')).toMatchObject({startPage:20,endPage:25,title:'改名后的第一件'});
+  // 重新预览后可确认
+  fireEvent.click(getByText('预览重排'));
+  expect((getByText('确认写入') as HTMLButtonElement).disabled).toBe(false);
+  fireEvent.click(getByText('确认写入'));
+  expect(storedArchives().find(a=>a.id==='id2')).toMatchObject({startPage:13,endPage:18,title:'改名后的第一件'});
+ });
+
  it('起始页非法时预览区说明原因并禁止确认',()=>{
   setup();const{getByText,getByLabelText,queryByText}=render(<App/>);
   fireEvent.click(getByText('连续编页'));
