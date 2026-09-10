@@ -109,6 +109,31 @@ describe('连续编页',()=>{const r=(x:Partial<Archive>):Archive=>a({...x});
   const out=applyRepagination(restored.archives,restored.resolutions,p);
   expect(out.archives.filter(a=>a.boxNo==='B1').map(a=>[a.archiveNo,a.startPage,a.endPage])).toEqual([['D-1',1,5],['D-2',6,9]]);
  });
+ it('档案标识互为前缀时，确认连续编页不误删其他盒档案的旧处置',()=>{
+  const xs=[r({id:'r',archiveNo:'A-1',declaredPages:2}),r({id:'r:1',archiveNo:'A-2',boxNo:'B2',startPage:5,endPage:6,declaredPages:2})];
+  const res:Resolutions={'r:count':{status:'fixed',note:'本盒'},'r:1:count':{status:'kept',note:'他盒'}};
+  const restored=parseBackup(JSON.stringify(makeBackup(xs,res)));
+  const p=buildRepagination(restored.archives,restored.resolutions,'B1','1') as Exclude<ReturnType<typeof buildRepagination>,{error:string}>;
+  // 预览计数只含本盒档案自己的处置
+  expect(p.rows.map(q=>q.resolutionCount)).toEqual([1]);
+  // 他盒档案 r:1 的处置不属本盒：其变化不应令本盒预览过期
+  expect(repageFingerprint(restored.archives,{...restored.resolutions,'r:1:count':{status:'fixed',note:'改动'}},'B1')).toBe(p.fingerprint);
+  const out=applyRepagination(restored.archives,restored.resolutions,p);
+  expect(out.resolutions).toEqual({'r:1:count':{status:'kept',note:'他盒'}});
+  expect(out.archives.find(a=>a.id==='r')).toMatchObject({startPage:1,endPage:2});
+  expect(out.archives.find(a=>a.id==='r:1')).toMatchObject({startPage:5,endPage:6});
+ });
+ it('处置键与他盒标识前缀重叠（overlap 键含他件标识）时归属判定不误伤',()=>{
+  const xs=[r({id:'x',archiveNo:'A-1',startPage:1,endPage:9,declaredPages:2}),r({id:'y:z',archiveNo:'A-2',startPage:5,endPage:20,declaredPages:2}),r({id:'x:overlap',archiveNo:'A-3',boxNo:'B2',startPage:1,endPage:3,declaredPages:3})];
+  const res:Resolutions={'x:overlap:y:z':{status:'kept',note:'B1 的重叠处置'}};
+  const restored=parseBackup(JSON.stringify(makeBackup(xs,res)));
+  // 键 `x:overlap:y:z` 属主是 B1 的 x（overlap 他件 y:z），不是 B2 的 x:overlap
+  const p=buildRepagination(restored.archives,restored.resolutions,'B2','1') as Exclude<ReturnType<typeof buildRepagination>,{error:string}>;
+  expect(p.rows.map(q=>q.resolutionCount)).toEqual([0]);
+  const out=applyRepagination(restored.archives,restored.resolutions,p);
+  expect(out.resolutions).toEqual(res);
+  expect(out.archives.find(a=>a.id==='x:overlap')).toMatchObject({startPage:1,endPage:3});
+ });
 });
 describe('筛选与备份',()=>{it('组合筛选问题状态',()=>{const xs=[a({}),a({id:'2',title:'其他',archiveNo:'X',year:2023,boxNo:'B2',declaredPages:2})],is=detectIssues(xs);expect(filterArchives(xs,is,{}, {query:'其他',year:'2023',box:'B2',status:'pending'})).toHaveLength(1)});it('备份往返并拒绝非法结构',()=>{expect(parseBackup(JSON.stringify(makeBackup([a({})],{}))).archives).toHaveLength(1);expect(()=>parseBackup('{"version":1,"archives":"bad"}')).toThrow(/无效/)});
  it('拒绝页码超过上限的旧版备份，边界值仍合法',()=>{

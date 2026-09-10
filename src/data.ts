@@ -40,24 +40,29 @@ export const boxOrder=(a:Archive,b:Archive)=>a.startPage-b.startPage||a.endPage-
 export type RepageRow={archive:Archive;oldStart:number;oldEnd:number;newStart:number;newEnd:number;resolutionCount:number};
 export type RepagePreview={box:string;startPage:number;rows:RepageRow[];fingerprint:string}|{error:string};
 export function parseStartPage(raw:string):number|{error:string}{const t=raw.trim();if(t==='')return{error:'请填写起始页'};if(!/^\d+$/.test(t))return{error:'起始页须为非负整数'};const n=Number(t);if(n>PAGE_MAX)return{error:`起始页不能超过页码上限 ${PAGE_MAX}`};return n}
+// 处置键形如 `${id}:${kind}`（overlap 另带 `:${他件id}`）。标识互为前缀时仅凭 startsWith 会把他件处置误判给本件：
+// 剩余部分须为合法问题种类，并取全体现档标识中最长的匹配作为属主
+const kindSuffix=(rest:string):boolean=>rest==='duplicate'||rest==='reversed'||rest==='count'||rest.startsWith('overlap:');
+const resolutionOwner=(key:string,ids:string[]):string|undefined=>ids.filter(id=>key.startsWith(`${id}:`)&&kindSuffix(key.slice(id.length+1))).sort((a,b)=>b.length-a.length)[0];
 // 盒内档案（含其处置）的指纹：同盒数据（题名、年度、期限、页码等任一字段）变化后旧预览必须作废，他盒变化不影响
 export function repageFingerprint(archives:Archive[],resolutions:Resolutions,box:string):string{
  const inBox=archives.filter(a=>a.boxNo===box);
  const items=inBox.map(a=>[a.id,a.archiveNo,a.title,a.year,a.retention,a.startPage,a.endPage,a.declaredPages,a.note]).sort((x,y)=>x[0]<y[0]?-1:x[0]>y[0]?1:0);
- // 处置键形如 `${id}:...`，档案标识本身可能含冒号，须以前缀匹配归属，不能按首个冒号截断
- const res=Object.keys(resolutions).filter(k=>inBox.some(a=>k.startsWith(`${a.id}:`))).sort().map(k=>[k,resolutions[k].status,resolutions[k].note]);
+ // 处置归属按全体现档标识判定：含冒号或互为前缀的标识不会把他盒处置算进本盒指纹
+ const allIds=archives.map(a=>a.id);const inBoxIds=new Set(inBox.map(a=>a.id));
+ const res=Object.keys(resolutions).filter(k=>{const o=resolutionOwner(k,allIds);return o!==undefined&&inBoxIds.has(o)}).sort().map(k=>[k,resolutions[k].status,resolutions[k].note]);
  return JSON.stringify({items,res});
 }
 export function buildRepagination(archives:Archive[],resolutions:Resolutions,box:string,rawStart:string):RepagePreview{
  if(!archives.some(a=>a.boxNo===box))return{error:'所选盒号不存在或盒内没有档案'};
  const start=parseStartPage(rawStart);if(typeof start!=='number')return start;
- const rows:RepageRow[]=[];let cursor=start;
+ const rows:RepageRow[]=[];let cursor=start;const allIds=archives.map(a=>a.id);
  for(const a of archives.filter(x=>x.boxNo===box).sort(boxOrder)){
   const pages=a.declaredPages;
   if(pages<=0)return{error:`${a.archiveNo} 申报页数为 ${pages}，无法生成有效页码区间，请先修正该件申报页数`};
   const newEnd=cursor+pages-1;
   if(cursor>PAGE_MAX||newEnd>PAGE_MAX)return{error:`${a.archiveNo} 重排后页码超过上限 ${PAGE_MAX}，请减小起始页或申报页数`};
-  const resolutionCount=Object.keys(resolutions).filter(k=>k.startsWith(`${a.id}:`)).length;
+  const resolutionCount=Object.keys(resolutions).filter(k=>resolutionOwner(k,allIds)===a.id).length;
   rows.push({archive:a,oldStart:a.startPage,oldEnd:a.endPage,newStart:cursor,newEnd,resolutionCount});cursor=newEnd+1;
  }
  return{box,startPage:start,rows,fingerprint:repageFingerprint(archives,resolutions,box)};
@@ -68,6 +73,8 @@ export function applyRepagination(archives:Archive[],resolutions:Resolutions,pre
  const rowOf=new Map<Archive,RepageRow>();
  archives.filter(a=>a.boxNo===preview.box).sort(boxOrder).forEach((a,i)=>rowOf.set(a,preview.rows[i]));
  const next=archives.map(a=>{const r=rowOf.get(a);return r?{...a,startPage:r.newStart,endPage:r.newEnd}:a});
- const kept=Object.fromEntries(Object.entries(resolutions).filter(([k])=>!preview.rows.some(r=>k.startsWith(`${r.archive.id}:`))));
+ // 只清除属主确为本盒档案的处置；标识互为前缀时他盒档案的旧处置不受影响
+ const allIds=archives.map(a=>a.id);const inBoxIds=new Set(preview.rows.map(r=>r.archive.id));
+ const kept=Object.fromEntries(Object.entries(resolutions).filter(([k])=>{const o=resolutionOwner(k,allIds);return o===undefined||!inBoxIds.has(o)}));
  return{archives:next,resolutions:kept};
 }

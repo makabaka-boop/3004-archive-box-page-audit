@@ -174,4 +174,24 @@ describe('连续编页界面',()=>{
   expect(storedArchives()).toEqual(seed);
   expect(storedRes()).toEqual(seedRes);
  });
+
+ it('恢复的档案标识互为前缀时，确认连续编页不误删其他盒旧处置',async()=>{
+  localStorage.clear();
+  const backup=makeBackup([
+   {id:'r',archiveNo:'A-1',title:'甲',year:2024,retention:'永久',boxNo:'B1',startPage:1,endPage:10,declaredPages:10,note:''},
+   {id:'r:1',archiveNo:'A-2',title:'乙',year:2024,retention:'永久',boxNo:'B2',startPage:1,endPage:5,declaredPages:5,note:''},
+  ],{'r:count':{status:'fixed',note:'本盒处置'},'r:1:count':{status:'kept',note:'他盒处置'}});
+  const{container,getByText}=render(<App/>);
+  await importJson(container,backup);
+  expect(getByText(/已恢复 2 条档案/)).toBeTruthy();
+  fireEvent.click(getByText('连续编页'));
+  // 默认选中盒 B1（标识 r），预览只统计本盒自己的 1 条处置
+  fireEvent.click(getByText('预览重排'));
+  expect(getByText(/将清除 1 条相关旧处置/)).toBeTruthy();
+  fireEvent.click(getByText('确认写入'));
+  // 本盒 r 的处置已清除，他盒 r:1 的处置保留
+  expect(storedRes()).toEqual({'r:1:count':{status:'kept',note:'他盒处置'}});
+  expect(storedArchives().find(a=>a.id==='r')).toMatchObject({startPage:1,endPage:10});
+  expect(storedArchives().find(a=>a.id==='r:1')).toMatchObject({startPage:1,endPage:5});
+ });
 });
