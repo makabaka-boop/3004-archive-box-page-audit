@@ -1,0 +1,97 @@
+import{useEffect,useRef,useState}from'react';
+import{foundCount,itemSeq,markFound,scanArchiveNo}from'./inventory';
+import type{InventoryItem,InventorySession}from'./types';
+
+const fmt=(iso:string)=>{const t=new Date(iso);return Number.isNaN(t.getTime())?iso:t.toLocaleString()};
+
+// 独立的盒内盘点面板：只读写盘点会话快照，不改动档案登记信息
+export default function InventoryPanel({box,session,onStart,onSession}:{box:string;session:InventorySession|undefined;onStart:()=>void;onSession:(s:InventorySession)=>void}){
+ const[input,setInput]=useState('');
+ const[candidates,setCandidates]=useState<InventoryItem[]|null>(null);
+ const[message,setMessage]=useState<{kind:'ok'|'error'|'info';text:string}|null>(null);
+ const inputRef=useRef<HTMLInputElement>(null);
+ const sessionId=session?.id;
+ // 换一会话（开始/重新盘点）时清空输入、候选与提示等临时状态
+ useEffect(()=>{setInput('');setCandidates(null);setMessage(null)},[sessionId]);
+ const found=session?foundCount(session):0;
+ const total=session?.items.length??0;
+ const done=!!session?.completedAt;
+
+ const submit=(e:React.FormEvent)=>{
+  e.preventDefault();
+  if(!session||done)return;
+  const raw=input.trim();
+  setInput('');
+  inputRef.current?.focus();
+  if(!raw){setCandidates(null);setMessage({kind:'error',text:'请先扫描或输入档号'});return}
+  const out=scanArchiveNo(session,raw);
+  if(out.kind==='found'){
+   onSession(out.session);
+   setCandidates(null);
+   const seq=itemSeq(session,out.item);
+   setMessage({kind:'ok',text:out.session.completedAt?`第 ${seq} 项「${out.item.archiveNo}」已登记为已找到，全部命中，盘点自动完成`:`第 ${seq} 项「${out.item.archiveNo}」已登记为已找到（${found+1}/${total}）`});
+  }else if(out.kind==='ambiguous'){
+   setCandidates(out.candidates);
+   setMessage({kind:'info',text:`档号「${raw}」命中 ${out.candidates.length} 件，请明确选中一件才会推进进度`});
+  }else if(out.kind==='duplicate'){
+   setCandidates(null);
+   setMessage({kind:'error',text:`档号「${raw}」已登记过，重复扫描不推进进度，快照与计数保持不变`});
+  }else{
+   setCandidates(null);
+   setMessage({kind:'error',text:`档号「${raw}」不在本盒盘点快照中，快照与计数保持不变`});
+  }
+ };
+
+ const pick=(item:InventoryItem)=>{
+  if(!session)return;
+  const r=markFound(session,item.itemId);
+  setCandidates(null);
+  if('error'in r){setMessage({kind:'error',text:r.error});return}
+  onSession(r.session);
+  const seq=itemSeq(session,r.item);
+  setMessage({kind:'ok',text:r.session.completedAt?`已选中第 ${seq} 项，全部命中，盘点自动完成`:`已选中第 ${seq} 项，「${r.item.archiveNo}」登记为已找到（${found+1}/${total}）`});
+  inputRef.current?.focus();
+ };
+
+ const cancel=()=>{setCandidates(null);setMessage({kind:'info',text:'已取消选择，快照与计数保持不变'});inputRef.current?.focus()};
+
+ return<section className="inventory-panel" aria-label={`盒 ${box} 盒内盘点`}>
+  <div className="inv-head"><span className="kicker">盒内盘点</span>{!session?<span className="inv-badge">未开始</span>:done?<span className="inv-badge done">已完成</span>:<span className="inv-badge doing">进行中</span>}</div>
+  {!session?<>
+   <p className="inv-tip">以当前盒内档案生成盘点快照，逐件扫描登记；不改动档案登记信息。</p>
+   <button type="button" className="primary" onClick={onStart}>开始盘点</button>
+  </>:<>
+   <p className="inv-meta">会话创建于 {fmt(session.createdAt)} · 快照 {total} 件{done&&session.completedAt?` · 完成于 ${fmt(session.completedAt)}`:''}</p>
+   <div className="inv-progress"><progress value={found} max={total}/><span>{found} / {total}</span></div>
+   {message&&<p className={`inv-msg ${message.kind}`} role="status">{message.text}</p>}
+   {done?<>
+    <div className="inv-done" role="status">✓ 全部 {total} 件已找到，本次盘点自动完成。</div>
+    <button type="button" onClick={onStart}>重新盘点</button>
+   </>:<>
+    <form className="inv-scan" onSubmit={submit}>
+     <input ref={inputRef} aria-label="扫描或输入档号" value={input} onChange={e=>setInput(e.target.value)} placeholder="扫描或输入档号后回车"/>
+     <button type="submit">登记</button>
+    </form>
+    {candidates&&<div className="inv-candidates" aria-label="歧义候选">
+     <p>同一档号命中多件，请选中实际盘点的那一件：</p>
+     {candidates.map(c=><div className="inv-candidate" key={c.itemId}>
+      <span className="inv-seq">第 {itemSeq(session,c)} 项</span>
+      <strong>{c.title}</strong>
+      <code>{c.startPage}—{c.endPage}</code>
+      <button type="button" onClick={()=>pick(c)}>选中此件</button>
+     </div>)}
+     <button type="button" onClick={cancel}>取消选择</button>
+    </div>}
+   </>}
+   <ul className="inv-items">
+    {session.items.map((it,idx)=><li key={it.itemId} className={it.found?'found':''}>
+     <span className="inv-seq">{idx+1}</span>
+     <span className="inv-no">{it.archiveNo}</span>
+     <small>{it.title}</small>
+     <code>{it.startPage}—{it.endPage}</code>
+     <em>{it.found?'已找到':'待盘点'}</em>
+    </li>)}
+   </ul>
+  </>}
+ </section>;
+}
