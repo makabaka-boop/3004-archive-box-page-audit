@@ -1,5 +1,6 @@
 import type {Archive,Backup,Issue,Resolutions} from './types';
 
+export const PAGE_MAX=999999;
 export const CSV_HEADERS=['档号','标题','年度','保管期限','盒号','起始页','结束页','申报页数','备注'];
 export const sampleArchives:Archive[]=[
  {id:'sample-1',archiveNo:'ZK-2024-001',title:'年度工作总结',year:2024,retention:'30年',boxNo:'A-01',startPage:1,endPage:18,declaredPages:18,note:''},
@@ -19,7 +20,7 @@ export function importCsv(text:string,existing:Archive[]=[]):Archive[]{
  const errors:string[]=[];const result:Archive[]=[];const seen=new Set(existing.map(a=>a.archiveNo));
  rows.slice(1).forEach((cells,index)=>{const line=index+2;if(cells.length===1&&cells[0].trim()==='')return;if(cells.length!==CSV_HEADERS.length){errors.push(`第 ${line} 行：列数应为 ${CSV_HEADERS.length}`);return;}const v=cells.map(x=>x.trim());
   const required=[0,1,2,3,4,5,6,7];required.forEach(i=>{if(!v[i])errors.push(`第 ${line} 行：${CSV_HEADERS[i]}不能为空`)});
-  const nums=[2,5,6,7].map(i=>Number(v[i]));[2,5,6,7].forEach((col,j)=>{if(!Number.isInteger(nums[j])||nums[j]<0||nums[j]>999999)errors.push(`第 ${line} 行：${CSV_HEADERS[col]}须为 0–999999 的整数`)});
+  const nums=[2,5,6,7].map(i=>Number(v[i]));[2,5,6,7].forEach((col,j)=>{if(!Number.isInteger(nums[j])||nums[j]<0||nums[j]>PAGE_MAX)errors.push(`第 ${line} 行：${CSV_HEADERS[col]}须为 0–${PAGE_MAX} 的整数`)});
   if(v[0]&&seen.has(v[0]))errors.push(`第 ${line} 行：档号“${v[0]}”重复`);else if(v[0])seen.add(v[0]);
   if(Number.isInteger(nums[1])&&Number.isInteger(nums[2])&&nums[2]<nums[1])errors.push(`第 ${line} 行：结束页不能小于起始页`);
   result.push({id:uid(),archiveNo:v[0],title:v[1],year:nums[0],retention:v[3],boxNo:v[4],startPage:nums[1],endPage:nums[2],declaredPages:nums[3],note:v[8]});
@@ -32,5 +33,29 @@ export function detectIssues(archives:Archive[]):Issue[]{const issues:Issue[]=[]
 export type Filters={query:string;year:string;box:string;status:'all'|'pending'|'fixed'|'kept'};
 export function filterArchives(archives:Archive[],issues:Issue[],resolutions:Resolutions,f:Filters){return archives.filter(a=>{const related=issues.filter(i=>i.archiveId===a.id);const statuses:Filters['status'][]=related.map(i=>resolutions[i.key]?.status||'pending');return(!f.query||a.title.toLowerCase().includes(f.query.toLowerCase())||a.archiveNo.toLowerCase().includes(f.query.toLowerCase()))&&(!f.year||String(a.year)===f.year)&&(!f.box||a.boxNo===f.box)&&(f.status==='all'||statuses.includes(f.status));});}
 function validArchive(a:unknown):a is Archive{if(!a||typeof a!=='object')return false;const x=a as Record<string,unknown>;return ['id','archiveNo','title','retention','boxNo','note'].every(k=>typeof x[k]==='string')&&['year','startPage','endPage','declaredPages'].every(k=>Number.isInteger(x[k])&&(x[k] as number)>=0);}
-export function makeBackup(archives:Archive[],resolutions:Resolutions):Backup{return{version:1,exportedAt:new Date().toISOString(),archives,resolutions}}
-export function parseBackup(text:string):Backup{let x:unknown;try{x=JSON.parse(text)}catch{throw new Error('无效备份：不是合法 JSON')}if(!x||typeof x!=='object')throw new Error('无效备份：格式错误');const b=x as Record<string,unknown>;if(b.version!==1||!Array.isArray(b.archives)||!b.archives.every(validArchive)||!b.resolutions||typeof b.resolutions!=='object'||Array.isArray(b.resolutions))throw new Error('无效备份：结构或档案字段错误');for(const value of Object.values(b.resolutions as Record<string,unknown>)){if(!value||typeof value!=='object'||!['fixed','kept'].includes(String((value as Record<string,unknown>).status))||typeof (value as Record<string,unknown>).note!=='string')throw new Error('无效备份：问题处置字段错误')}return b as unknown as Backup}
+export function makeBackup(archives:Archive[],resolutions:Resolutions):Backup{return{version:1,exportedAt:new Date().toISOString(),archives,resolutions}}export function parseBackup(text:string):Backup{let x:unknown;try{x=JSON.parse(text)}catch{throw new Error('无效备份：不是合法 JSON')}if(!x||typeof x!=='object')throw new Error('无效备份：格式错误');const b=x as Record<string,unknown>;if(b.version!==1||!Array.isArray(b.archives)||!b.archives.every(validArchive)||!b.resolutions||typeof b.resolutions!=='object'||Array.isArray(b.resolutions))throw new Error('无效备份：结构或档案字段错误');for(const value of Object.values(b.resolutions as Record<string,unknown>)){if(!value||typeof value!=='object'||!['fixed','kept'].includes(String((value as Record<string,unknown>).status))||typeof (value as Record<string,unknown>).note!=='string')throw new Error('无效备份：问题处置字段错误')}return b as unknown as Backup}
+
+// 连续编页：按当前起始页、结束页、档号稳定排序后，依据每件申报页数依次生成连续区间
+export const boxOrder=(a:Archive,b:Archive)=>a.startPage-b.startPage||a.endPage-b.endPage||(a.archiveNo<b.archiveNo?-1:a.archiveNo>b.archiveNo?1:0)||(a.id<b.id?-1:a.id>b.id?1:0);
+export type RepageRow={archive:Archive;oldStart:number;oldEnd:number;newStart:number;newEnd:number;resolutionCount:number};
+export type RepagePreview={box:string;startPage:number;rows:RepageRow[]}|{error:string};
+export function parseStartPage(raw:string):number|{error:string}{const t=raw.trim();if(t==='')return{error:'请填写起始页'};if(!/^\d+$/.test(t))return{error:'起始页须为非负整数'};const n=Number(t);if(n>PAGE_MAX)return{error:`起始页不能超过页码上限 ${PAGE_MAX}`};return n}
+export function buildRepagination(archives:Archive[],resolutions:Resolutions,box:string,rawStart:string):RepagePreview{
+ if(!archives.some(a=>a.boxNo===box))return{error:'所选盒号不存在或盒内没有档案'};
+ const start=parseStartPage(rawStart);if(typeof start!=='number')return start;
+ const rows:RepageRow[]=[];let cursor=start;
+ for(const a of archives.filter(x=>x.boxNo===box).sort(boxOrder)){
+  const pages=a.declaredPages;const newEnd=cursor+pages-1;
+  if(cursor>PAGE_MAX||newEnd>PAGE_MAX)return{error:`${a.archiveNo} 重排后页码超过上限 ${PAGE_MAX}，请减小起始页或申报页数`};
+  const resolutionCount=Object.keys(resolutions).filter(k=>k.startsWith(`${a.id}:`)).length;
+  rows.push({archive:a,oldStart:a.startPage,oldEnd:a.endPage,newStart:cursor,newEnd,resolutionCount});cursor=newEnd+1;
+ }
+ return{box,startPage:start,rows};
+}
+export function applyRepagination(archives:Archive[],resolutions:Resolutions,preview:Exclude<RepagePreview,{error:string}>):{archives:Archive[];resolutions:Resolutions}{
+ const byId=new Map(preview.rows.map(r=>[r.archive.id,r]));
+ const next=archives.map(a=>byId.has(a.id)?{...a,startPage:(byId.get(a.id)as RepageRow).newStart,endPage:(byId.get(a.id)as RepageRow).newEnd}:a);
+ const ids=new Set(preview.rows.map(r=>r.archive.id));
+ const kept=Object.fromEntries(Object.entries(resolutions).filter(([k])=>!ids.has(k.slice(0,k.indexOf(':')))));
+ return{archives:next,resolutions:kept};
+}
