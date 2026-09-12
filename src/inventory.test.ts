@@ -236,4 +236,71 @@ describe('盒内盘点会话',()=>{
   const bad=s.items.map((i,idx)=>({...i,found:true,physicalSeq:idx===0?0:1}));
   expect(parseSessions(JSON.stringify([{...s,items:bad}]))).toEqual([]);
  });
+
+ it('登记保留档号两端空格时，扫描肉眼相同的档号仍正常命中并推进盘点',()=>{
+  // 档案登记保留了档号两端空格，快照照存原样
+  const s=sessionOf([a({id:'arc-1',archiveNo:' A-1 '}),a({id:'arc-2',archiveNo:'A-2',startPage:20,endPage:25})]);
+  expect(s.items[0].archiveNo).toBe(' A-1 ');
+  // 库房扫描不带空格的档号：正常命中而非误判不在快照中
+  const out=scanArchiveNo(s,'A-1');
+  if(out.kind!=='found')throw new Error('应唯一命中');
+  expect(out.item.archiveId).toBe('arc-1');
+  expect(out.session.items[0].found).toBe(true);
+  expect(out.session.items[0].physicalSeq).toBe(1);
+  expect(foundCount(out.session)).toBe(1);
+  // 扫描件自身带空格、快照侧不带空格也同样命中；命中后再扫判定重复
+  const s2=sessionOf([a({id:'arc-9',archiveNo:'A-9'})]);
+  const out2=scanArchiveNo(s2,'  A-9  ');
+  if(out2.kind!=='found')throw new Error('应唯一命中');
+  expect(scanArchiveNo(out2.session,'A-9').kind).toBe('duplicate');
+ });
+
+ it('恢复仍有待盘项却带完成标记的会话时回退为进行中，可继续扫描直至全部命中',()=>{
+  const s=sessionOf([a({id:'arc-1',archiveNo:'A-1'}),a({id:'arc-2',archiveNo:'A-2',startPage:20,endPage:25})]);
+  // 损坏的本地数据：只命中一件，却已写入完成标记
+  const broken={...s,completedAt:'2026-09-11T00:00:00.000Z',items:s.items.map((i,idx)=>idx===0?{...i,found:true,physicalSeq:1}:i)};
+  const restored=parseSessions(JSON.stringify([broken]))[0];
+  expect(restored.completedAt).toBeNull();
+  expect(foundCount(restored)).toBe(1);
+  expect(isComplete(restored)).toBe(false);
+  // 仍可扫描推进，剩余件取得接续实物序号 2，全部命中后才真正完成
+  const out=scanArchiveNo(restored,'A-2');
+  if(out.kind!=='found')throw new Error('应命中');
+  expect(out.session.items.map(i=>i.physicalSeq)).toEqual([1,2]);
+  expect(out.session.completedAt).toBeTruthy();
+  // 全部命中且带完成标记的正常完成会话，恢复后仍为已完成
+  expect(parseSessions(JSON.stringify([out.session]))[0].completedAt).toBeTruthy();
+ });
+
+ it('恢复的待盘项残留实物序号时被清空，下一次有效扫描只接续已命中项编号',()=>{
+  const s=sessionOf([a({id:'arc-1',archiveNo:'A-1'}),a({id:'arc-2',archiveNo:'A-2',startPage:20,endPage:25}),a({id:'arc-3',archiveNo:'A-3',startPage:30,endPage:35})]);
+  // 第一件已命中取得序号 1；待盘的第二件却被写入残留序号 5（会导致跳号）
+  const broken={...s,items:s.items.map((i,idx)=>idx===0?{...i,found:true,physicalSeq:1}:idx===1?{...i,physicalSeq:5}:i)};
+  const restored=parseSessions(JSON.stringify([broken]))[0];
+  expect(restored.items[1].found).toBe(false);
+  expect(restored.items[1].physicalSeq).toBeNull();
+  // 下一次有效扫描应接续为 2，而不是跳到 6
+  const out=scanArchiveNo(restored,'A-2');
+  if(out.kind!=='found')throw new Error('应命中');
+  expect(out.session.items.map(i=>i.physicalSeq)).toEqual([1,2,null]);
+ });
+
+ it('恢复含重复会话项标识的会话后，明示选中一件只登记选中那件且不产生重复序号',()=>{
+  const s=sessionOf([a({id:'arc-1',archiveNo:'DUP',title:'甲',startPage:1,endPage:5}),a({id:'arc-2',archiveNo:'DUP',title:'乙',startPage:6,endPage:9})]);
+  // 损坏的本地数据：两个会话项共用同一 itemId
+  const dupId=s.items[0].itemId;
+  const broken={...s,items:s.items.map(i=>({...i,itemId:dupId}))};
+  const restored=parseSessions(JSON.stringify([broken]))[0];
+  const ids=restored.items.map(i=>i.itemId);
+  expect(new Set(ids).size).toBe(2);
+  expect(restored.items.map(i=>i.archiveId)).toEqual(['arc-1','arc-2']);
+  // 歧义后选中第二件：只登记乙，取得唯一实物序号 1
+  const out=scanArchiveNo(restored,'DUP');
+  if(out.kind!=='ambiguous')throw new Error('应歧义');
+  const picked=out.candidates.find(c=>c.archiveId==='arc-2')!;
+  const r=markFound(restored,picked.itemId);
+  if('error'in r)throw new Error('不应失败');
+  expect(r.session.items.map(i=>i.found)).toEqual([false,true]);
+  expect(r.session.items.map(i=>i.physicalSeq)).toEqual([null,1]);
+ });
 });

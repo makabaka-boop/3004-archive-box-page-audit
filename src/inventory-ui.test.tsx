@@ -203,6 +203,48 @@ describe('盒内盘点界面',()=>{
   expect(storedSessions()[1].items.map(i=>i.physicalSeq)).toEqual([1,2]);
  });
 
+ it('快照档号保留两端空格时，扫描肉眼相同的档号正常命中',()=>{
+  const spaced:Archive[]=[{...seed[0],archiveNo:' A-001 '},{...seed[1],archiveNo:'A-002'}];
+  localStorage.clear();localStorage.setItem(ARCHIVES_KEY,JSON.stringify(spaced));
+  render(<App/>);
+  const panel=panelOf('B1');
+  fireEvent.click(within(panel).getByText('开始盘点'));
+  // 扫描不带空格的档号：正常命中而非提示不在快照中
+  scan(panel,'A-001');
+  expect(within(panel).getByText('1 / 2')).toBeTruthy();
+  expect(within(panel).queryByText(/不在本盒盘点快照中/)).toBeNull();
+  // 档案登记原样保留两端空格，盘点不改写登记信息
+  expect(storedArchives()[0].archiveNo).toBe(' A-001 ');
+  scan(panel,' A-002 ');
+  expect(within(panel).getByText('已完成')).toBeTruthy();
+ });
+
+ it('恢复仍有待盘项却带完成标记的会话时，面板保持进行中并允许继续扫描至全部命中',()=>{
+  // 损坏的本地数据：2 件中仅 1 件已命中，却写入了完成标记
+  const broken={id:'stale-done',boxNo:'B1',createdAt:'2026-09-11T00:00:00.000Z',completedAt:'2026-09-11T01:00:00.000Z',items:[
+   {itemId:'si1',archiveId:'id1',archiveNo:'A-001',title:'第一件',startPage:1,endPage:10,found:true,physicalSeq:1},
+   {itemId:'si2',archiveId:'id2',archiveNo:'A-002',title:'第二件',startPage:11,endPage:20,found:false,physicalSeq:null},
+  ]};
+  localStorage.clear();
+  localStorage.setItem(ARCHIVES_KEY,JSON.stringify(seed));
+  localStorage.setItem(INVENTORY_KEY,JSON.stringify([broken]));
+  render(<App/>);
+  const panel=panelOf('B1');
+  // 恢复后显示进行中而非已完成，扫描框可用，进度仍为 1 / 2
+  expect(within(panel).getByText('1 / 2')).toBeTruthy();
+  expect(within(panel).getByText('进行中')).toBeTruthy();
+  expect(within(panel).queryByText('已完成')).toBeNull();
+  expect(within(panel).getByLabelText('扫描或输入档号')).toBeTruthy();
+  // 完成标记已在恢复时清除
+  expect(storedSessions()[0].completedAt).toBeNull();
+  // 继续扫描剩余件：接续实物序号 2 并真正完成
+  scan(panel,'A-002');
+  expect(within(panel).getByText('2 / 2')).toBeTruthy();
+  expect(within(panel).getByText('已完成')).toBeTruthy();
+  expect(storedSessions()[0].completedAt).toBeTruthy();
+  expect(storedSessions()[0].items.map(i=>i.physicalSeq)).toEqual([1,2]);
+ });
+
  it('加载没有实物序号的旧会话：照常显示原进度，但明确提示无法复核顺序',()=>{
   // 旧版会话：item 不含 physicalSeq，进度为 2 件全部找到且已完成
   const legacy={id:'old-session',boxNo:'B1',createdAt:'2026-01-01T00:00:00.000Z',completedAt:'2026-01-01T01:00:00.000Z',items:[
