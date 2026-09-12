@@ -162,6 +162,40 @@ describe('借阅台界面',()=>{
   expect(storedBorrows()).toHaveLength(1);
  });
 
+ it('两个页面同时办理同一档案借阅时，后确认者被提示重新选择且不产生记录',()=>{
+  setup();
+  // 两个同时打开的页面：各自持有内存状态，共享同一本地存储
+  const tabA=render(<App/>);
+  const tabB=render(<App/>);
+  const deskIn=(c:HTMLElement)=>c.querySelector('#borrowdesk') as HTMLElement;
+  const rowIn=(c:HTMLElement,no:string)=>[...c.querySelectorAll('.records tbody tr')].find(tr=>tr.textContent?.includes(no)) as HTMLElement;
+  const fillIn=(c:HTMLElement,no:string,name:string,due:string)=>{
+   fireEvent.click(within(rowIn(c,no)).getByText('借阅'));
+   fireEvent.change(within(deskIn(c)).getByLabelText('查阅人'),{target:{value:name}});
+   fireEvent.change(within(deskIn(c)).getByLabelText('预计归还日'),{target:{value:due}});
+  };
+  // 两名查阅人在各自页面对同一档案发起借阅
+  fillIn(tabA.container,'A-001','张三','2099-01-01');
+  fillIn(tabB.container,'A-001','李四','2099-01-02');
+  // 先确认者成功
+  fireEvent.click(within(deskIn(tabA.container)).getByText('确认借出'));
+  expect(within(tabA.container).getByText(/已借出给 张三/)).toBeTruthy();
+  expect(storedBorrows()).toHaveLength(1);
+  // 后确认者：按最新存储记录判定已有未归还记录，被拒绝并提示重新选择
+  fireEvent.click(within(deskIn(tabB.container)).getByText('确认借出'));
+  const alert=within(deskIn(tabB.container)).getByRole('alert');
+  expect(alert.textContent).toContain('已有未归还记录');
+  expect(alert.textContent).toContain('重新选择');
+  // 不产生第二条记录：存储中仍只有先确认者那一条
+  const recs=storedBorrows();
+  expect(recs).toHaveLength(1);
+  expect(recs[0].borrower).toBe('张三');
+  // 后确认页面同步为最新记录：该档案显示借出中，未归还区可见先确认者的记录，自己的输入保留
+  expect(within(rowIn(tabB.container,'A-001')).getByText('借出中')).toBeTruthy();
+  expect(within(deskIn(tabB.container)).getByLabelText('未归还记录').textContent).toContain('张三');
+  expect((within(deskIn(tabB.container)).getByLabelText('查阅人') as HTMLInputElement).value).toBe('李四');
+ });
+
  it('JSON 备份恢复不导入也不清除借阅记录',async()=>{
   setup();const{container}=render(<App/>);
   startBorrow('A-001');

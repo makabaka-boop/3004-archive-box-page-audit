@@ -15,11 +15,12 @@ export default function App(){const[archives,setArchives]=useState<Archive[]>(()
  const latestByBox=useMemo(()=>new Map(sessions.map((s):[string,InventorySession]=>[s.boxNo,s])),[sessions]);
  const startInventory=(box:string)=>{const s=createSession(archives,box);if('error'in s){setNotice({kind:'error',text:s.error});return}setSessions(p=>[...p,s]);setNotice({kind:'ok',text:`盒 ${box} 盘点会话已创建：快照 ${s.items.length} 件，创建时间 ${s.createdAt}`})};
  const saveSession=(next:InventorySession)=>setSessions(p=>p.map(s=>s.id===next.id?next:s));
- // 借阅：从档案清单发起，确认时以当时的档案与记录现状为准；失败只提示原因，不产生任何记录
+ // 借阅：从档案清单发起；确认与归还前重新读取本地存储中的最新记录再校验——两个页面同时办理
+ // 同一档案时，后确认者按最新记录被拒绝并提示重新选择；失败只提示原因，不产生任何记录
  const startBorrow=(a:Archive)=>{setBorrowTarget(a);setBorrowError(null);document.getElementById('borrowdesk')?.scrollIntoView?.({behavior:'smooth'})};
  const cancelBorrow=()=>{setBorrowTarget(null);setBorrowError(null)};
- const confirmBorrow=(borrower:string,due:string)=>{if(!borrowTarget)return;const r=borrowArchive(borrows,archives,borrowTarget.id,borrower,due);if('error'in r){setBorrowError(r.error);return}setBorrows(r.records);setBorrowTarget(null);setBorrowError(null);setNotice({kind:'ok',text:`${r.record.archiveNo} 已借出给 ${r.record.borrower}，预计 ${r.record.dueDate} 归还`})};
- const doReturn=(recordId:string)=>{const r=returnBorrow(borrows,recordId);if('error'in r){setNotice({kind:'error',text:r.error});return}setBorrows(r.records);setNotice({kind:'ok',text:`${r.record.archiveNo} 已归还，借阅记录已补写归还时间`})};
+ const confirmBorrow=(borrower:string,due:string)=>{if(!borrowTarget)return;const stored=parseBorrowRecords(localStorage.getItem(BORROW_KEY));const r=borrowArchive(stored,archives,borrowTarget.id,borrower,due);if('error'in r){setBorrows(stored);setBorrowError(r.error);return}setBorrows(r.records);setBorrowTarget(null);setBorrowError(null);setNotice({kind:'ok',text:`${r.record.archiveNo} 已借出给 ${r.record.borrower}，预计 ${r.record.dueDate} 归还`})};
+ const doReturn=(recordId:string)=>{const stored=parseBorrowRecords(localStorage.getItem(BORROW_KEY));const r=returnBorrow(stored,recordId);if('error'in r){setBorrows(stored);setNotice({kind:'error',text:r.error});return}setBorrows(r.records);setNotice({kind:'ok',text:`${r.record.archiveNo} 已归还，借阅记录已补写归还时间`})};
  const openRepage=()=>{setRepageOpen(true);setRepageBox(boxes.includes(repageBox)?repageBox:boxes[0]||'');setPreview(null)};
  const closeRepage=()=>{setRepageOpen(false);setPreview(null)};
  const runPreview=(e:React.FormEvent)=>{e.preventDefault();setPreview(buildRepagination(archives,resolutions,repageBox,repageStart))};
